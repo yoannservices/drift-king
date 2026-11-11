@@ -86,14 +86,14 @@ for(let i=0;i<30;i++){const a=i/30*Math.PI*2+Math.random()*.2,r=1050+Math.random
 const m=new T.Mesh(new T.ConeGeometry(rad,h,6),new T.MeshStandardMaterial({color:0x6c5a88,flatShading:true,roughness:1}));m.position.set(x,h/2-60,z);scene.add(m);
 const cap=new T.Mesh(new T.ConeGeometry(rad*.36,h*.36,6),new T.MeshStandardMaterial({color:0xfaf0f4,flatShading:true,roughness:1}));cap.position.set(x,h-60-h*.18,z);scene.add(cap)}
 
-// voiture : vraie Ferrari 458 (exemples three.js, par vicent091036 ; licence à vérifier), chargée par assets/glb.js
+// voiture : Ferrari 458 Italia 2015 (Sketchfab, Tyler_Dave, CC-BY 4.0, voir assets/models/CREDITS.md), chargée par assets/glb.js
 const car=new T.Group(),inner=new T.Group();car.add(inner);scene.add(car);
-const wheels=[];
-import(new URL('../../assets/glb.js',location.href).href).then(m=>m.loadGLB(new URL('../../assets/models/ferrari.glb',location.href).href)).then(g=>{
-const m=new T.Group();m.rotation.y=Math.PI;m.add(g);                       // le modèle regarde vers -Z
-g.traverse(o=>{if(o.isMesh){o.castShadow=true;if(o.material.name==='Body_Color')o.material.color.set(0x1fb5b0)}});
-for(const[n,f]of[['wheel_fl',1],['wheel_fr',1],['wheel_rl',0],['wheel_rr',0]]){const w=g.getObjectByName(n),piv=new T.Group();piv.position.copy(w.position);w.position.set(0,0,0);w.parent.add(piv);piv.add(w);wheels.push({piv,w,f,s:-1})} // s : le modèle est retourné, la roue tourne dans l'autre sens
-inner.add(m)}).catch(e=>console.warn('Ferrari non chargée',e));
+const wheels=[];let poseWheel=null;
+import(new URL('../../assets/glb.js',location.href).href).then(async m=>{
+const g=m.fitGLB(await m.loadGLB(new URL('../../assets/models/ferrari-458.glb',location.href).href),4.53,0); // avant du modèle sur +Z, comme la voiture du jeu
+g.traverse(o=>{if(o.isMesh){o.castShadow=true;if(o.material.name==='Material.001')o.material.color.set(0x1fb5b0)}}); // Material.001 : carrosserie
+for(const w of m.rigWheels(g))wheels.push(Object.assign(w,{a:0}));poseWheel=m.poseWheel;
+inner.add(g)}).catch(e=>console.warn('Ferrari non chargée',e));
 
 // particules
 const smk=glow('rgba(245,232,226,1)'),SM=[];
@@ -108,7 +108,7 @@ function reset(i){i=i===undefined?st.idx:i;const p=P[i],t=Tn[i];Object.assign(st
 let camSnap=true,running=false,clock=0,hit=0,total=0,best=0,flashT=0,flashTxt='',flashCls='';
 try{best=+localStorage.getItem('cdd_best')||0}catch(e){}
 const D={t:0,pts:0,mult:1,idle:0};
-const K={};addEventListener('keydown',e=>{K[e.code]=1;if(e.code=='Space'||e.code.startsWith('Arrow'))e.preventDefault();if(e.code=='KeyR')reset()});addEventListener('keyup',e=>K[e.code]=0);
+const K={};addEventListener('keydown',e=>{K[e.code]=1;if(e.code=='Space'||e.code.startsWith('Arrow'))e.preventDefault();if(e.code=='KeyR')reset();if(e.code=='KeyC'){camMode=(camMode+1)%3;camSnap=true}});addEventListener('keyup',e=>K[e.code]=0);
 function flash(t,c){flashTxt=t;flashCls=c;flashT=1.8}
 function fail(){if(D.pts>5)flash('RATÉ !','bad');D.pts=0;D.t=0}
 function track(x,z){let b=1e12,bi=st.idx;for(let o=-25;o<=25;o++){const i=(st.idx+o+n)%n,dx=P[i].x-x,dz=P[i].z-z,d=dx*dx+dz*dz;if(d<b){b=d;bi=i}}st.idx=bi}
@@ -150,6 +150,7 @@ $('go').onclick=()=>{audio();$('start').style.display='none';running=true;reset(
 
 // caméra
 const cv=new T.Vector3(),lk=new T.Vector3();
+let camMode=0; // C : 0 poursuite, 1 éloignée, 2 capot
 // caméra : clic gauche + glisser pour tourner autour de la voiture
 const orb={yaw:0,pitch:0,drag:false,lx:0,ly:0,idle:9,id:null},cnv=renderer.domElement;
 cnv.classList.add('orbit');
@@ -160,7 +161,10 @@ cnv.addEventListener('pointerup',orbEnd);cnv.addEventListener('pointercancel',or
 function cam(dt,spd,drifting){
 let ct;if(running){const va=spd>4?Math.atan2(st.vx,st.vz):st.th;ct=st.th+angD(va,st.th)*.55}else ct=st.th+Math.PI*.78+clock*.15;
 st.cam+=angD(ct,st.cam)*(1-Math.exp(-dt*(running?5:2)));
-const dist=(running?7.2:10)+spd*.05,hg=(running?2.6:3.4)+spd*.012;
+if(camMode===2&&running){ // capot : caméra posée sur la voiture, regard droit devant
+car.updateMatrixWorld();camera.position.copy(car.localToWorld(cv.set(0,1.12,.75)));camera.lookAt(car.localToWorld(lk.set(0,.95,12)));
+st.fov+=(70-st.fov)*(1-Math.exp(-dt*3));camera.fov=st.fov;camera.updateProjectionMatrix();return}
+const far=camMode===1?1.7:1,dist=((running?7.2:10)+spd*.05)*far,hg=((running?2.6:3.4)+spd*.012)*far;
 // orbite souris : revient doucement derrière la voiture après 1,5 s sans glisser
 if(!orb.drag){orb.idle+=dt;if(orb.idle>1.5){const f=Math.exp(-dt*2.5);orb.yaw*=f;orb.pitch*=f}}
 const ca=st.cam+orb.yaw,R=Math.hypot(dist,hg),ce=Math.atan2(hg,dist)+orb.pitch;
@@ -205,7 +209,7 @@ car.position.set(st.x,st.y,st.z);
 const gr=Gr[st.idx]*(Tn[st.idx].x*sn+Tn[st.idx].z*cs_),pt=-Math.atan(gr);st.pitch+=(pt-st.pitch)*Math.min(1,dt*10);
 st.br+=(clamp(st.om*spd*.004,-.12,.12)-st.br)*Math.min(1,dt*6);st.bp+=(clamp(-(thr?1:0)*.03+(K.KeyS&&running?.04:0),-.05,.05)-st.bp)*Math.min(1,dt*5);
 car.rotation.set(st.pitch,st.th,0,'YXZ');inner.rotation.set(st.bp,0,st.br);
-for(const w of wheels){if(w.f)w.piv.rotation.y=st.steer*.5*(spd>25?.6:1);w.w.rotation.x+=(w.s||1)*f1*dt/.36}
+for(const w of wheels){w.a+=f1*dt/.38;poseWheel(w,w.a,st.steer*.5*(spd>25?.6:1))}
 // fumée / traces
 const slipping=running&&spd>6&&(Math.abs(l1)>2.4||(hb&&spd>8));
 const rx=st.x-sn*1.3,rz=st.z-cs_*1.3,wl=[[rx+cs_*.95,rz-sn*.95],[rx-cs_*.95,rz+sn*.95]];
